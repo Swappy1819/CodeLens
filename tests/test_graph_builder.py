@@ -102,8 +102,34 @@ def test_ingests_syntax_error_files_as_files_without_symbols() -> None:
     builder.ingest("sample-repository", [analysis])
 
     _, ingestion_session = driver.sessions[1]
-    assert len(ingestion_session.calls) == 1
-    assert "MERGE (file:File" in ingestion_session.calls[0][0]
+    assert len(ingestion_session.calls) == 2
+    assert "MERGE (file:File" in ingestion_session.calls[1][0]
+
+def test_ingest_clears_existing_repository_before_reingesting() -> None:
+    driver = FakeDriver()
+    builder = GraphBuilder(
+        SimpleNamespace(driver=driver, database="neo4j")
+    )
+    analysis = FileAnalysis(
+        Path("main.py"),
+        [],
+    )
+
+    builder.ingest("sample-repository", [analysis])
+
+    _, ingestion_session = driver.sessions[1]
+
+    clear_query, clear_parameters = ingestion_session.calls[0]
+
+    assert clear_query == (
+        "MATCH (node {repository_id: $repository_id}) "
+        "DETACH DELETE node"
+    )
+    assert clear_parameters == {
+        "repository_id": "sample-repository",
+    }
+
+    assert "MERGE (file:File" in ingestion_session.calls[1][0]
 
 
 def test_resolves_unqualified_function_calls() -> None:

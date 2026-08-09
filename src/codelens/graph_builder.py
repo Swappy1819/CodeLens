@@ -36,17 +36,27 @@ class GraphBuilder:
                 session.run(query).consume()
 
     def ingest(self, repository_name: str, analyses: Iterable[FileAnalysis]) -> None:
-        """Persist analysis results for a repository without creating duplicates."""
+        """Replace the repository graph with the current analysis."""
         self.ensure_schema()
         repository_id = repository_name
         analyses = list(analyses)
 
         with self.client.driver.session(database=self.client.database) as session:
+            self._clear_repository(session, repository_id)
+
             for analysis in analyses:
                 self._merge_file(session, repository_id, repository_name, analysis)
                 self._merge_symbols(session, repository_id, analysis)
             self._merge_inheritance(session, repository_id, analyses)
             self._merge_calls(session, repository_id, analyses)
+
+    def _clear_repository(self, session, repository_id: str) -> None:
+        """Remove all graph nodes belonging to one repository."""
+        session.run(
+            "MATCH (node {repository_id: $repository_id}) "
+            "DETACH DELETE node",
+            repository_id=repository_id,
+        ).consume()
 
     def _merge_file(
         self,
@@ -156,6 +166,7 @@ class GraphBuilder:
         analyses = list(analyses)
         symbols = [symbol for analysis in analyses for symbol in analysis.symbols]
         file_paths = {analysis.file_path for analysis in analyses}
+
         for analysis in analyses:
             for call in analysis.calls:
                 callee = self._resolve_call(call, symbols, file_paths)
@@ -183,6 +194,7 @@ class GraphBuilder:
         analyses = list(analyses)
         symbols = [symbol for analysis in analyses for symbol in analysis.symbols]
         file_paths = {analysis.file_path for analysis in analyses}
+
         for analysis in analyses:
             for base in analysis.bases:
                 parent = self._resolve_base(base, symbols, file_paths)
@@ -194,10 +206,14 @@ class GraphBuilder:
                     "MATCH (base:Class {id: $base_id}) "
                     "MERGE (child)-[:EXTENDS]->(base)",
                     child_id=self._class_id(
-                        repository_id, base.child_file_path, base.child_name
+                        repository_id,
+                        base.child_file_path,
+                        base.child_name,
                     ),
                     base_id=self._class_id(
-                        repository_id, parent.file_path, parent.name
+                        repository_id,
+                        parent.file_path,
+                        parent.name,
                     ),
                 ).consume()
 
@@ -208,6 +224,7 @@ class GraphBuilder:
         file_paths: Iterable[Path],
     ):
         symbols = list(symbols)
+
         if base.base_qualifier is None:
             candidates = [
                 symbol
@@ -217,11 +234,17 @@ class GraphBuilder:
                 and symbol.name == base.base_name
             ]
             candidates.extend(
-                GraphBuilder._from_import_class_candidates(base, symbols, file_paths)
+                GraphBuilder._from_import_class_candidates(
+                    base,
+                    symbols,
+                    file_paths,
+                )
             )
         else:
             candidates = GraphBuilder._module_import_class_candidates(
-                base, symbols, file_paths
+                base,
+                symbols,
+                file_paths,
             )
 
         unique_candidates = set(candidates)
@@ -234,6 +257,7 @@ class GraphBuilder:
         file_paths: Iterable[Path],
     ):
         candidates = []
+
         for imported in symbols:
             if (
                 imported.symbol_type != "from_import"
@@ -243,6 +267,7 @@ class GraphBuilder:
                 or imported.imported_name in (None, "*")
             ):
                 continue
+
             candidates.extend(
                 GraphBuilder._local_class_candidates(
                     imported.module,
@@ -253,6 +278,7 @@ class GraphBuilder:
                     file_paths,
                 )
             )
+
         return candidates
 
     @staticmethod
@@ -262,6 +288,7 @@ class GraphBuilder:
         file_paths: Iterable[Path],
     ):
         candidates = []
+
         for imported in symbols:
             if (
                 imported.symbol_type != "import"
@@ -270,6 +297,7 @@ class GraphBuilder:
                 or imported.name != base.base_qualifier
             ):
                 continue
+
             candidates.extend(
                 GraphBuilder._local_class_candidates(
                     imported.module,
@@ -280,6 +308,7 @@ class GraphBuilder:
                     file_paths,
                 )
             )
+
         return candidates
 
     @staticmethod
@@ -297,6 +326,7 @@ class GraphBuilder:
             caller_file_path,
             file_paths,
         )
+
         return [
             symbol
             for symbol in symbols
@@ -312,6 +342,7 @@ class GraphBuilder:
         file_paths: Iterable[Path],
     ):
         symbols = list(symbols)
+
         if call.callee_qualifier is None:
             candidates = [
                 symbol
@@ -321,9 +352,16 @@ class GraphBuilder:
                 and symbol.name == call.callee_name
             ]
             candidates.extend(
-                GraphBuilder._from_import_candidates(call, symbols, file_paths)
+                GraphBuilder._from_import_candidates(
+                    call,
+                    symbols,
+                    file_paths,
+                )
             )
-        elif call.callee_qualifier == "self" and call.caller_parent_class is not None:
+        elif (
+            call.callee_qualifier == "self"
+            and call.caller_parent_class is not None
+        ):
             candidates = [
                 symbol
                 for symbol in symbols
@@ -334,7 +372,9 @@ class GraphBuilder:
             ]
         else:
             candidates = GraphBuilder._module_import_candidates(
-                call, symbols, file_paths
+                call,
+                symbols,
+                file_paths,
             )
 
         unique_candidates = set(candidates)
@@ -347,6 +387,7 @@ class GraphBuilder:
         file_paths: Iterable[Path],
     ):
         candidates = []
+
         for imported in symbols:
             if (
                 imported.symbol_type != "from_import"
@@ -356,6 +397,7 @@ class GraphBuilder:
                 or imported.imported_name in (None, "*")
             ):
                 continue
+
             candidates.extend(
                 GraphBuilder._local_function_candidates(
                     imported.module,
@@ -366,6 +408,7 @@ class GraphBuilder:
                     file_paths,
                 )
             )
+
         return candidates
 
     @staticmethod
@@ -375,6 +418,7 @@ class GraphBuilder:
         file_paths: Iterable[Path],
     ):
         candidates = []
+
         for imported in symbols:
             if (
                 imported.symbol_type != "import"
@@ -383,6 +427,7 @@ class GraphBuilder:
                 or imported.name != call.callee_qualifier
             ):
                 continue
+
             candidates.extend(
                 GraphBuilder._local_function_candidates(
                     imported.module,
@@ -393,6 +438,7 @@ class GraphBuilder:
                     file_paths,
                 )
             )
+
         return candidates
 
     @staticmethod
@@ -410,6 +456,7 @@ class GraphBuilder:
             caller_file_path,
             file_paths,
         )
+
         return [
             symbol
             for symbol in symbols
@@ -429,16 +476,19 @@ class GraphBuilder:
             return set()
 
         base_path = Path()
+
         if relative_import_level:
             base_path = caller_file_path.parent
             for _ in range(relative_import_level - 1):
                 base_path = base_path.parent
 
         module_path = base_path.joinpath(*module.split("."))
+
         candidates = {
             module_path.with_suffix(".py"),
             module_path / "__init__.py",
         }
+
         return candidates.intersection(set(file_paths))
 
     def _call_id(self, repository_id: str, call: CallSite) -> str:
@@ -447,18 +497,26 @@ class GraphBuilder:
                 f"{repository_id}:{call.caller_file_path}:{call.caller_name}:"
                 f"{call.caller_start_line}"
             )
-        if call.caller_type == "method" and call.caller_parent_class is not None:
+
+        if (
+            call.caller_type == "method"
+            and call.caller_parent_class is not None
+        ):
             return (
-                f"{repository_id}:{call.caller_file_path}:{call.caller_parent_class}:"
-                f"{call.caller_name}:{call.caller_start_line}"
+                f"{repository_id}:{call.caller_file_path}:"
+                f"{call.caller_parent_class}:{call.caller_name}:"
+                f"{call.caller_start_line}"
             )
+
         raise ValueError("Call sites must have a function or method caller")
 
     def _symbol_id(self, repository_id: str, symbol: Symbol) -> str:
         if symbol.symbol_type == "function":
             return self._function_id(repository_id, symbol)
+
         if symbol.symbol_type == "method":
             return self._method_id(repository_id, symbol)
+
         raise ValueError("CALLS targets must be functions or methods")
 
     def _symbol_parameters(
@@ -468,6 +526,7 @@ class GraphBuilder:
         entity_type: str,
     ) -> dict:
         file_path = str(symbol.file_path)
+
         parameters = {
             "repository_id": repository_id,
             "file_id": self._file_id(repository_id, symbol.file_path),
@@ -476,14 +535,24 @@ class GraphBuilder:
             "start_line": symbol.start_line,
             "end_line": symbol.end_line,
         }
+
         if entity_type == "class":
             parameters["class_id"] = self._class_id(
-                repository_id, symbol.file_path, symbol.name
+                repository_id,
+                symbol.file_path,
+                symbol.name,
             )
         elif entity_type == "function":
-            parameters["function_id"] = self._function_id(repository_id, symbol)
+            parameters["function_id"] = self._function_id(
+                repository_id,
+                symbol,
+            )
         elif entity_type == "method":
-            parameters["method_id"] = self._method_id(repository_id, symbol)
+            parameters["method_id"] = self._method_id(
+                repository_id,
+                symbol,
+            )
+
         return parameters
 
     @staticmethod
@@ -496,11 +565,12 @@ class GraphBuilder:
 
     def _function_id(self, repository_id: str, symbol: Symbol) -> str:
         return (
-            f"{repository_id}:{symbol.file_path}:{symbol.name}:{symbol.start_line}"
+            f"{repository_id}:{symbol.file_path}:"
+            f"{symbol.name}:{symbol.start_line}"
         )
 
     def _method_id(self, repository_id: str, symbol: Symbol) -> str:
         return (
-            f"{repository_id}:{symbol.file_path}:{symbol.parent_name}:"
-            f"{symbol.name}:{symbol.start_line}"
+            f"{repository_id}:{symbol.file_path}:"
+            f"{symbol.parent_name}:{symbol.name}:{symbol.start_line}"
         )
