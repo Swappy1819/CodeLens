@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).parents[1] / "src"))
 
 from codelens.analyzer import CallSite, ClassBase, FileAnalysis, Symbol, analyze_repository
 from codelens.graph_builder import CONSTRAINT_QUERIES, GraphBuilder
+from codelens.graph_queries import GraphQueryService
 from codelens.neo4j_client import Neo4jClient
 
 
@@ -556,6 +557,28 @@ def test_ingests_graph_into_live_neo4j(tmp_path: Path) -> None:
             "extends": 1,
             "calls": 3,
         }
+
+        queries = GraphQueryService(client)
+        function_id = f"{repository_id}:example.py:function:18"
+        assert [entity.name for entity in queries.callers(function_id)] == []
+        assert [entity.name for entity in queries.callees(function_id)] == [
+            "helper",
+            "process_payment",
+        ]
+        assert [
+            entity.name
+            for entity in queries.subclasses(
+                f"{repository_id}:bases.py:PaymentBase"
+            )
+        ] == ["Example"]
+        assert [
+            file.file_path
+            for file in queries.files_importing_module(repository_id, "payments")
+        ] == ["example.py"]
+        assert [entity.name for entity in queries.impact(function_id).callees] == [
+            "helper",
+            "process_payment",
+        ]
     finally:
         with client.driver.session(database=client.database) as session:
             session.run(
