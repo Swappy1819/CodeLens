@@ -3,6 +3,8 @@ from types import SimpleNamespace
 
 from codelens.change_detector import ChangedSymbol
 from codelens.context_builder import ContextLimits
+from codelens.diff_parser import ChangedRange
+from codelens.review import ReviewFinding, ReviewResult
 from codelens.review_workflow import ReviewWorkflow
 
 
@@ -154,3 +156,75 @@ def test_review_workflow_formats_repository_context(monkeypatch):
     assert "Subclasses:" in context
     assert "Importing files:" in context
     assert "- None" in context
+
+
+def test_review_workflow_filters_out_of_scope_findings(monkeypatch):
+    changed_symbol = ChangedSymbol(
+        id="repo:main.py:target:1",
+        file_path="main.py",
+        name="target",
+        symbol_type="Function",
+        start_line=1,
+        end_line=2,
+        changed_ranges=(
+            ChangedRange(start_line=1, end_line=1),
+        ),
+    )
+
+    monkeypatch.setattr(
+        "codelens.review_workflow.parse_git_diff",
+        lambda diff_text: (),
+    )
+
+    monkeypatch.setattr(
+        "codelens.review_workflow.detect_changed_symbols",
+        lambda repository, changed_files: (changed_symbol,),
+    )
+
+    monkeypatch.setattr(
+        "codelens.review_workflow.SourceProvider",
+        FakeSourceProvider,
+    )
+
+    class FakeProvider:
+        def review(self, request):
+            return ReviewResult(
+                findings=(
+                    ReviewFinding(
+                        severity="high",
+                        title="Real changed-code problem",
+                        description="Problem in changed code.",
+                        file_path="main.py",
+                        start_line=1,
+                        end_line=1,
+                    ),
+                    ReviewFinding(
+                        severity="high",
+                        title="Unrelated file problem",
+                        description="Problem in another file.",
+                        file_path="other.py",
+                        start_line=1,
+                        end_line=1,
+                    ),
+                    ReviewFinding(
+                        severity="high",
+                        title="Unchanged code problem",
+                        description="Problem outside the change.",
+                        file_path="main.py",
+                        start_line=10,
+                        end_line=10,
+                    ),
+                )
+            )
+
+    workflow = ReviewWorkflow(
+        repository=Path("."),
+        graph_queries=FakeGraphQueries(),
+        provider=FakeProvider(),
+        context_limits=ContextLimits(),
+    )
+
+    result = workflow.review("diff")
+
+    assert len(result.findings) == 1
+    assert result.findings[0].title == "Real changed-code problem"
