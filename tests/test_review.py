@@ -3,7 +3,13 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).parents[1] / "src"))
 
-from codelens.review import ReviewEngine, ReviewFinding, ReviewRequest, ReviewResult
+from codelens.diff_parser import ChangedRange
+from codelens.review import (
+    ReviewEngine,
+    ReviewFinding,
+    ReviewRequest,
+    ReviewResult,
+)
 
 
 def test_review_finding_is_immutable() -> None:
@@ -116,3 +122,123 @@ def test_review_engine_preserves_empty_result() -> None:
     )
 
     assert engine.review(request) == expected
+
+
+def test_review_engine_filters_findings_from_other_files() -> None:
+    in_scope = ReviewFinding(
+        severity="high",
+        title="Changed code problem",
+        description="Problem in changed code.",
+        file_path="service.py",
+        start_line=10,
+        end_line=10,
+    )
+
+    out_of_scope = ReviewFinding(
+        severity="high",
+        title="Unrelated problem",
+        description="Problem in another file.",
+        file_path="other.py",
+        start_line=10,
+        end_line=10,
+    )
+
+    provider = FakeLLMProvider(
+        ReviewResult(findings=(in_scope, out_of_scope))
+    )
+    engine = ReviewEngine(provider)
+
+    request = ReviewRequest(
+        symbol_id="repo:service.py:run:10",
+        file_path="service.py",
+        symbol_name="run",
+        symbol_type="method",
+        start_line=10,
+        end_line=15,
+        source="return value",
+        context="",
+        changed_ranges=(
+            ChangedRange(start_line=10, end_line=10),
+        ),
+    )
+
+    result = engine.review(request)
+
+    assert result.findings == (in_scope,)
+
+
+def test_review_engine_filters_findings_outside_changed_lines() -> None:
+    in_scope = ReviewFinding(
+        severity="high",
+        title="Changed code problem",
+        description="Problem in changed code.",
+        file_path="service.py",
+        start_line=10,
+        end_line=10,
+    )
+
+    out_of_scope = ReviewFinding(
+        severity="high",
+        title="Unchanged code problem",
+        description="Problem outside changed lines.",
+        file_path="service.py",
+        start_line=20,
+        end_line=20,
+    )
+
+    provider = FakeLLMProvider(
+        ReviewResult(findings=(in_scope, out_of_scope))
+    )
+    engine = ReviewEngine(provider)
+
+    request = ReviewRequest(
+        symbol_id="repo:service.py:run:10",
+        file_path="service.py",
+        symbol_name="run",
+        symbol_type="method",
+        start_line=10,
+        end_line=20,
+        source="return value",
+        context="",
+        changed_ranges=(
+            ChangedRange(start_line=10, end_line=10),
+        ),
+    )
+
+    result = engine.review(request)
+
+    assert result.findings == (in_scope,)
+
+
+def test_review_engine_preserves_finding_overlapping_changed_range() -> None:
+    finding = ReviewFinding(
+        severity="high",
+        title="Cross-line problem",
+        description="Problem spans the changed line.",
+        file_path="service.py",
+        start_line=8,
+        end_line=12,
+    )
+
+    provider = FakeLLMProvider(
+        ReviewResult(findings=(finding,))
+    )
+    engine = ReviewEngine(provider)
+
+    request = ReviewRequest(
+        symbol_id="repo:service.py:run:10",
+        file_path="service.py",
+        symbol_name="run",
+        symbol_type="method",
+        start_line=10,
+        end_line=15,
+        source="return value",
+        context="",
+        changed_ranges=(
+            ChangedRange(start_line=10, end_line=10),
+        ),
+    )
+
+    result = engine.review(request)
+
+    assert result.findings == (finding,)

@@ -55,5 +55,35 @@ class ReviewEngine:
         self.provider = provider
 
     def review(self, request: ReviewRequest) -> ReviewResult:
-        """Submit one review request to the configured LLM provider."""
-        return self.provider.review(request)
+        """Submit one review request and keep only in-scope findings."""
+
+        result = self.provider.review(request)
+
+        # Preserve backend-neutral behavior for callers that do not
+        # provide explicit Git changed ranges.
+        if not request.changed_ranges:
+            return result
+
+        findings = tuple(
+            finding
+            for finding in result.findings
+            if self._is_in_scope(finding, request)
+        )
+
+        return ReviewResult(findings=findings)
+
+    @staticmethod
+    def _is_in_scope(
+        finding: ReviewFinding,
+        request: ReviewRequest,
+    ) -> bool:
+        """Return whether a finding overlaps the actual changed lines."""
+
+        if finding.file_path != request.file_path:
+            return False
+
+        return any(
+            finding.start_line <= changed.end_line
+            and finding.end_line >= changed.start_line
+            for changed in request.changed_ranges
+        )

@@ -79,8 +79,7 @@ class ReviewWorkflow:
             changed_ranges=symbol.changed_ranges,
         )
 
-    @staticmethod
-    def _format_context(context: SymbolContext) -> str:
+    def _format_context(self, context: SymbolContext) -> str:
         """Format structured repository context for the LLM."""
 
         sections = []
@@ -96,28 +95,34 @@ class ReviewWorkflow:
             )
 
         sections.append(
-            ReviewWorkflow._format_symbols(
+            self._format_symbols(
                 "Callers",
                 context.callers,
             )
         )
 
         sections.append(
-            ReviewWorkflow._format_symbols(
+            self._format_symbols(
                 "Callees",
                 context.callees,
             )
         )
 
         sections.append(
-            ReviewWorkflow._format_symbols(
+            self._format_verified_callee_sources(
+                context.callees,
+            )
+        )
+
+        sections.append(
+            self._format_symbols(
                 "Subclasses",
                 context.subclasses,
             )
         )
 
         sections.append(
-            ReviewWorkflow._format_files(
+            self._format_files(
                 "Importing files",
                 context.importing_files,
             )
@@ -133,6 +138,54 @@ class ReviewWorkflow:
             )
 
         return "\n\n".join(sections)
+
+    def _format_verified_callee_sources(
+        self,
+        callees,
+    ) -> str:
+        """Include bounded source for verified callee symbols."""
+
+        sections = ["Verified callee source:"]
+
+        if not callees:
+            sections.append("- None")
+            return "\n".join(sections)
+
+        found_source = False
+
+        for callee in callees:
+            location = callee.location
+
+            source = self.source_provider.get_source(
+                symbol_id=callee.id,
+                file_path=location.file_path,
+                start_line=location.start_line,
+                end_line=location.end_line,
+            )
+
+            if source is None:
+                continue
+
+            found_source = True
+
+            sections.extend(
+                [
+                    (
+                        f"{callee.kind} {callee.name} "
+                        f"({location.file_path}:"
+                        f"{location.start_line}-"
+                        f"{location.end_line}):"
+                    ),
+                    "```python",
+                    source.content,
+                    "```",
+                ]
+            )
+
+        if not found_source:
+            sections.append("- None")
+
+        return "\n".join(sections)
 
     @staticmethod
     def _format_symbols(title: str, symbols) -> str:
