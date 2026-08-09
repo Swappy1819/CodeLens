@@ -8,7 +8,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parents[1] / "src"))
 
-from codelens.analyzer import FileAnalysis, Symbol, analyze_repository
+from codelens.analyzer import CallSite, FileAnalysis, Symbol, analyze_repository
 from codelens.graph_builder import CONSTRAINT_QUERIES, GraphBuilder
 from codelens.neo4j_client import Neo4jClient
 
@@ -105,6 +105,87 @@ def test_ingests_syntax_error_files_as_files_without_symbols() -> None:
     assert "MERGE (file:File" in ingestion_session.calls[0][0]
 
 
+def test_resolves_unqualified_function_calls() -> None:
+    file_path = Path("calls.py")
+    analysis = FileAnalysis(
+        file_path=file_path,
+        symbols=[
+            Symbol("helper", "function", file_path, 1, 2),
+            Symbol("caller", "function", file_path, 4, 5),
+        ],
+        calls=[
+            CallSite(
+                "function", "caller", file_path, 4, None, "helper", None, 5, 4
+            )
+        ],
+    )
+    driver = FakeDriver()
+    builder = GraphBuilder(SimpleNamespace(driver=driver, database="neo4j"))
+
+    builder.ingest("sample-repository", [analysis])
+
+    _, ingestion_session = driver.sessions[1]
+    query, parameters = ingestion_session.calls[-1]
+    assert "MERGE (caller)-[:CALLS" in query
+    assert "helper" not in query
+    assert parameters == {
+        "caller_id": "sample-repository:calls.py:caller:4",
+        "callee_id": "sample-repository:calls.py:helper:1",
+        "file_path": "calls.py",
+        "start_line": 5,
+        "start_column": 4,
+    }
+
+
+def test_resolves_self_method_calls() -> None:
+    file_path = Path("calls.py")
+    analysis = FileAnalysis(
+        file_path=file_path,
+        symbols=[
+            Symbol("run", "method", file_path, 2, 3, parent_name="Service"),
+            Symbol("prepare", "method", file_path, 5, 6, parent_name="Service"),
+        ],
+        calls=[
+            CallSite(
+                "method", "run", file_path, 2, "Service", "prepare", "self", 3, 8
+            )
+        ],
+    )
+    driver = FakeDriver()
+    builder = GraphBuilder(SimpleNamespace(driver=driver, database="neo4j"))
+
+    builder.ingest("sample-repository", [analysis])
+
+    _, ingestion_session = driver.sessions[1]
+    _, parameters = ingestion_session.calls[-1]
+    assert parameters["caller_id"] == "sample-repository:calls.py:Service:run:2"
+    assert parameters["callee_id"] == "sample-repository:calls.py:Service:prepare:5"
+
+
+def test_skips_ambiguous_and_unresolved_call_targets() -> None:
+    file_path = Path("calls.py")
+    analysis = FileAnalysis(
+        file_path=file_path,
+        symbols=[
+            Symbol("caller", "function", file_path, 1, 4),
+            Symbol("helper", "function", file_path, 6, 7),
+            Symbol("helper", "function", file_path, 9, 10),
+        ],
+        calls=[
+            CallSite("function", "caller", file_path, 1, None, "helper", None, 2, 4),
+            CallSite("function", "caller", file_path, 1, None, "missing", None, 3, 4),
+            CallSite("function", "caller", file_path, 1, None, "run", "service", 4, 4),
+        ],
+    )
+    driver = FakeDriver()
+    builder = GraphBuilder(SimpleNamespace(driver=driver, database="neo4j"))
+
+    builder.ingest("sample-repository", [analysis])
+
+    _, ingestion_session = driver.sessions[1]
+    assert not any("[:CALLS" in query for query, _ in ingestion_session.calls)
+
+
 @pytest.mark.skipif(
     not all(
         os.getenv(name) for name in ("NEO4J_URI", "NEO4J_USERNAME", "NEO4J_PASSWORD")
@@ -121,8 +202,12 @@ def test_ingests_graph_into_live_neo4j(tmp_path: Path) -> None:
         "class Example:\n"
         "    def method(self):\n"
         "        pass\n\n"
+        "    def caller(self):\n"
+        "        self.method()\n\n"
+        "def helper():\n"
+        "    pass\n\n"
         "def function():\n"
-        "    pass\n"
+        "    helper()\n"
     )
     client = Neo4jClient()
     builder = GraphBuilder(client)
@@ -137,20 +222,24 @@ def test_ingests_graph_into_live_neo4j(tmp_path: Path) -> None:
                 "OPTIONAL MATCH (class)-[class_method:CONTAINS]->(method:Method) "
                 "OPTIONAL MATCH (file)-[file_function:CONTAINS]->(function:Function) "
                 "OPTIONAL MATCH (file)-[file_module:IMPORTS]->(module:Module) "
+                "OPTIONAL MATCH (caller)-[call:CALLS]->(callee) "
+                "WHERE caller.repository_id = $repository_id "
                 "RETURN count(DISTINCT repository_file) AS repository_files, "
                 "count(DISTINCT file_class) AS file_classes, "
                 "count(DISTINCT class_method) AS class_methods, "
                 "count(DISTINCT file_function) AS file_functions, "
-                "count(DISTINCT file_module) AS file_modules",
+                "count(DISTINCT file_module) AS file_modules, "
+                "count(DISTINCT call) AS calls",
                 repository_id=repository_id,
             ).single()
 
         assert dict(record) == {
             "repository_files": 1,
             "file_classes": 1,
-            "class_methods": 1,
-            "file_functions": 1,
+            "class_methods": 2,
+            "file_functions": 2,
             "file_modules": 1,
+            "calls": 2,
         }
     finally:
         with client.driver.session(database=client.database) as session:

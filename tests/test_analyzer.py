@@ -83,3 +83,66 @@ def test_invalid_python_file_does_not_stop_repository_analysis(tmp_path: Path) -
     assert analyses[Path("invalid.py")].symbols == []
     assert analyses[Path("invalid.py")].syntax_error is not None
     assert analyses[Path("valid.py")].symbols[0].name == "valid"
+
+
+def test_extracts_unqualified_call_sites_inside_functions(tmp_path: Path) -> None:
+    write_python_file(
+        tmp_path,
+        "calls.py",
+        "def helper():\n    pass\n\ndef caller():\n    helper()\n",
+    )
+
+    call = analyze_repository(tmp_path)[0].calls[0]
+
+    assert call.caller_type == "function"
+    assert call.caller_name == "caller"
+    assert call.callee_name == "helper"
+    assert call.callee_qualifier is None
+    assert call.start_line == 5
+    assert call.start_column == 4
+
+
+def test_extracts_self_method_call_sites(tmp_path: Path) -> None:
+    write_python_file(
+        tmp_path,
+        "calls.py",
+        "class Service:\n    def run(self):\n        self.prepare()\n\n    def prepare(self):\n        pass\n",
+    )
+
+    call = analyze_repository(tmp_path)[0].calls[0]
+
+    assert call.caller_type == "method"
+    assert call.caller_name == "run"
+    assert call.caller_parent_class == "Service"
+    assert call.callee_name == "prepare"
+    assert call.callee_qualifier == "self"
+
+
+def test_extracts_multiple_call_sites(tmp_path: Path) -> None:
+    write_python_file(
+        tmp_path,
+        "calls.py",
+        "def caller():\n    first()\n    second()\n",
+    )
+
+    calls = analyze_repository(tmp_path)[0].calls
+
+    assert [(call.callee_name, call.start_line) for call in calls] == [
+        ("first", 2),
+        ("second", 3),
+    ]
+
+
+def test_ignores_calls_outside_functions_and_unsupported_expressions(tmp_path: Path) -> None:
+    write_python_file(
+        tmp_path,
+        "calls.py",
+        "outside()\n\ndef caller(service):\n    service.run()\n    factory()()\n",
+    )
+
+    calls = analyze_repository(tmp_path)[0].calls
+
+    assert [(call.callee_qualifier, call.callee_name) for call in calls] == [
+        ("service", "run"),
+        (None, "factory"),
+    ]

@@ -3,7 +3,7 @@
 from pathlib import Path
 from typing import Iterable
 
-from .analyzer import FileAnalysis, Symbol
+from .analyzer import CallSite, FileAnalysis, Symbol
 from .neo4j_client import Neo4jClient
 
 
@@ -39,11 +39,13 @@ class GraphBuilder:
         """Persist analysis results for a repository without creating duplicates."""
         self.ensure_schema()
         repository_id = repository_name
+        analyses = list(analyses)
 
         with self.client.driver.session(database=self.client.database) as session:
             for analysis in analyses:
                 self._merge_file(session, repository_id, repository_name, analysis)
                 self._merge_symbols(session, repository_id, analysis)
+            self._merge_calls(session, repository_id, analyses)
 
     def _merge_file(
         self,
@@ -141,6 +143,76 @@ class GraphBuilder:
             module_id=symbol.module,
             module_name=symbol.module,
         ).consume()
+
+    def _merge_calls(
+        self,
+        session,
+        repository_id: str,
+        analyses: Iterable[FileAnalysis],
+    ) -> None:
+        analyses = list(analyses)
+        symbols = [symbol for analysis in analyses for symbol in analysis.symbols]
+        for analysis in analyses:
+            for call in analysis.calls:
+                callee = self._resolve_call(call, symbols)
+                if callee is None:
+                    continue
+
+                session.run(
+                    "MATCH (caller {id: $caller_id}) "
+                    "MATCH (callee {id: $callee_id}) "
+                    "MERGE (caller)-[:CALLS {file_path: $file_path, "
+                    "start_line: $start_line, start_column: $start_column}]->(callee)",
+                    caller_id=self._call_id(repository_id, call),
+                    callee_id=self._symbol_id(repository_id, callee),
+                    file_path=str(call.caller_file_path),
+                    start_line=call.start_line,
+                    start_column=call.start_column,
+                ).consume()
+
+    @staticmethod
+    def _resolve_call(call: CallSite, symbols: Iterable[Symbol]):
+        if call.callee_qualifier is None:
+            candidates = [
+                symbol
+                for symbol in symbols
+                if symbol.symbol_type == "function"
+                and symbol.file_path == call.caller_file_path
+                and symbol.name == call.callee_name
+            ]
+        elif call.callee_qualifier == "self" and call.caller_parent_class is not None:
+            candidates = [
+                symbol
+                for symbol in symbols
+                if symbol.symbol_type == "method"
+                and symbol.file_path == call.caller_file_path
+                and symbol.parent_name == call.caller_parent_class
+                and symbol.name == call.callee_name
+            ]
+        else:
+            return None
+
+        return candidates[0] if len(candidates) == 1 else None
+
+    def _call_id(self, repository_id: str, call: CallSite) -> str:
+        if call.caller_type == "function":
+            return (
+                f"{repository_id}:{call.caller_file_path}:{call.caller_name}:"
+                f"{call.caller_start_line}"
+            )
+        if call.caller_type == "method" and call.caller_parent_class is not None:
+            return (
+                f"{repository_id}:{call.caller_file_path}:{call.caller_parent_class}:"
+                f"{call.caller_name}:{call.caller_start_line}"
+            )
+        raise ValueError("Call sites must have a function or method caller")
+
+    def _symbol_id(self, repository_id: str, symbol: Symbol) -> str:
+        if symbol.symbol_type == "function":
+            return self._function_id(repository_id, symbol)
+        if symbol.symbol_type == "method":
+            return self._method_id(repository_id, symbol)
+        raise ValueError("CALLS targets must be functions or methods")
 
     def _symbol_parameters(
         self,
