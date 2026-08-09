@@ -61,6 +61,32 @@ def test_extracts_imports_and_from_imports(tmp_path: Path) -> None:
     ]
 
 
+def test_preserves_imported_names_aliases_and_relative_levels(tmp_path: Path) -> None:
+    write_python_file(
+        tmp_path,
+        "package/caller.py",
+        "from payments import process_payment\n"
+        "from .payments import process_payment as pay\n"
+        "import payments as p\n",
+    )
+
+    symbols = analyze_repository(tmp_path)[0].symbols
+
+    assert [
+        (
+            symbol.name,
+            symbol.module,
+            symbol.imported_name,
+            symbol.relative_import_level,
+        )
+        for symbol in symbols
+    ] == [
+        ("process_payment", "payments", "process_payment", 0),
+        ("pay", "payments", "process_payment", 1),
+        ("p", "payments", "payments", 0),
+    ]
+
+
 def test_records_symbol_line_numbers(tmp_path: Path) -> None:
     write_python_file(
         tmp_path,

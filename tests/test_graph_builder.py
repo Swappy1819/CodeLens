@@ -186,6 +186,146 @@ def test_skips_ambiguous_and_unresolved_call_targets() -> None:
     assert not any("[:CALLS" in query for query, _ in ingestion_session.calls)
 
 
+def test_resolves_repository_local_imports_and_aliases() -> None:
+    caller_path = Path("caller.py")
+    payments_path = Path("payments.py")
+    analyses = [
+        FileAnalysis(
+            file_path=caller_path,
+            symbols=[
+                Symbol("caller", "function", caller_path, 4, 7),
+                Symbol(
+                    "process_payment",
+                    "from_import",
+                    caller_path,
+                    1,
+                    1,
+                    module="payments",
+                    imported_name="process_payment",
+                ),
+                Symbol(
+                    "pay",
+                    "from_import",
+                    caller_path,
+                    2,
+                    2,
+                    module="payments",
+                    imported_name="process_payment",
+                ),
+                Symbol(
+                    "p",
+                    "import",
+                    caller_path,
+                    3,
+                    3,
+                    module="payments",
+                    imported_name="payments",
+                ),
+            ],
+            calls=[
+                CallSite(
+                    "function",
+                    "caller",
+                    caller_path,
+                    4,
+                    None,
+                    "process_payment",
+                    None,
+                    5,
+                    4,
+                ),
+                CallSite(
+                    "function", "caller", caller_path, 4, None, "pay", None, 6, 4
+                ),
+                CallSite(
+                    "function",
+                    "caller",
+                    caller_path,
+                    4,
+                    None,
+                    "process_payment",
+                    "p",
+                    7,
+                    4,
+                ),
+            ],
+        ),
+        FileAnalysis(
+            file_path=payments_path,
+            symbols=[Symbol("process_payment", "function", payments_path, 1, 2)],
+        ),
+    ]
+    driver = FakeDriver()
+    builder = GraphBuilder(SimpleNamespace(driver=driver, database="neo4j"))
+
+    builder.ingest("sample-repository", analyses)
+
+    _, ingestion_session = driver.sessions[1]
+    call_parameters = [
+        parameters
+        for query, parameters in ingestion_session.calls
+        if "[:CALLS" in query
+    ]
+    assert len(call_parameters) == 3
+    assert {parameters["callee_id"] for parameters in call_parameters} == {
+        "sample-repository:payments.py:process_payment:1"
+    }
+
+
+def test_resolves_straightforward_relative_imports() -> None:
+    caller_path = Path("package/caller.py")
+    payments_path = Path("package/payments.py")
+    analyses = [
+        FileAnalysis(
+            file_path=caller_path,
+            symbols=[
+                Symbol("caller", "function", caller_path, 3, 4),
+                Symbol(
+                    "process_payment",
+                    "from_import",
+                    caller_path,
+                    1,
+                    1,
+                    module="payments",
+                    imported_name="process_payment",
+                    relative_import_level=1,
+                ),
+            ],
+            calls=[
+                CallSite(
+                    "function",
+                    "caller",
+                    caller_path,
+                    3,
+                    None,
+                    "process_payment",
+                    None,
+                    4,
+                    4,
+                )
+            ],
+        ),
+        FileAnalysis(
+            file_path=payments_path,
+            symbols=[Symbol("process_payment", "function", payments_path, 1, 2)],
+        ),
+    ]
+    driver = FakeDriver()
+    builder = GraphBuilder(SimpleNamespace(driver=driver, database="neo4j"))
+
+    builder.ingest("sample-repository", analyses)
+
+    _, ingestion_session = driver.sessions[1]
+    call_parameters = [
+        parameters
+        for query, parameters in ingestion_session.calls
+        if "[:CALLS" in query
+    ]
+    assert call_parameters[0]["callee_id"] == (
+        "sample-repository:package/payments.py:process_payment:1"
+    )
+
+
 @pytest.mark.skipif(
     not all(
         os.getenv(name) for name in ("NEO4J_URI", "NEO4J_USERNAME", "NEO4J_PASSWORD")
@@ -196,9 +336,12 @@ def test_ingests_graph_into_live_neo4j(tmp_path: Path) -> None:
     repository_id = f"codelens-integration-{uuid4()}"
     module_name = f"codelens_test_module_{uuid4().hex}"
     source = tmp_path / "example.py"
+    payments = tmp_path / "payments.py"
+    payments.write_text("def process_payment():\n    pass\n")
     source.write_text(
         f"import {module_name}\n"
         f"from {module_name} import helper\n\n"
+        "from payments import process_payment as pay\n\n"
         "class Example:\n"
         "    def method(self):\n"
         "        pass\n\n"
@@ -208,6 +351,7 @@ def test_ingests_graph_into_live_neo4j(tmp_path: Path) -> None:
         "    pass\n\n"
         "def function():\n"
         "    helper()\n"
+        "    pay()\n"
     )
     client = Neo4jClient()
     builder = GraphBuilder(client)
@@ -234,12 +378,12 @@ def test_ingests_graph_into_live_neo4j(tmp_path: Path) -> None:
             ).single()
 
         assert dict(record) == {
-            "repository_files": 1,
+            "repository_files": 2,
             "file_classes": 1,
             "class_methods": 2,
-            "file_functions": 2,
-            "file_modules": 1,
-            "calls": 2,
+            "file_functions": 3,
+            "file_modules": 2,
+            "calls": 3,
         }
     finally:
         with client.driver.session(database=client.database) as session:

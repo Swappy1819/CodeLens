@@ -134,14 +134,16 @@ class GraphBuilder:
         if symbol.module is None:
             return
 
+        module_name = "." * symbol.relative_import_level + symbol.module
+
         session.run(
             "MATCH (file:File {id: $file_id}) "
             "MERGE (module:Module {id: $module_id}) "
             "SET module.name = $module_name "
             "MERGE (file)-[:IMPORTS]->(module)",
             file_id=self._file_id(repository_id, symbol.file_path),
-            module_id=symbol.module,
-            module_name=symbol.module,
+            module_id=module_name,
+            module_name=module_name,
         ).consume()
 
     def _merge_calls(
@@ -152,9 +154,10 @@ class GraphBuilder:
     ) -> None:
         analyses = list(analyses)
         symbols = [symbol for analysis in analyses for symbol in analysis.symbols]
+        file_paths = {analysis.file_path for analysis in analyses}
         for analysis in analyses:
             for call in analysis.calls:
-                callee = self._resolve_call(call, symbols)
+                callee = self._resolve_call(call, symbols, file_paths)
                 if callee is None:
                     continue
 
@@ -171,7 +174,12 @@ class GraphBuilder:
                 ).consume()
 
     @staticmethod
-    def _resolve_call(call: CallSite, symbols: Iterable[Symbol]):
+    def _resolve_call(
+        call: CallSite,
+        symbols: Iterable[Symbol],
+        file_paths: Iterable[Path],
+    ):
+        symbols = list(symbols)
         if call.callee_qualifier is None:
             candidates = [
                 symbol
@@ -180,6 +188,9 @@ class GraphBuilder:
                 and symbol.file_path == call.caller_file_path
                 and symbol.name == call.callee_name
             ]
+            candidates.extend(
+                GraphBuilder._from_import_candidates(call, symbols, file_paths)
+            )
         elif call.callee_qualifier == "self" and call.caller_parent_class is not None:
             candidates = [
                 symbol
@@ -190,9 +201,113 @@ class GraphBuilder:
                 and symbol.name == call.callee_name
             ]
         else:
-            return None
+            candidates = GraphBuilder._module_import_candidates(
+                call, symbols, file_paths
+            )
 
-        return candidates[0] if len(candidates) == 1 else None
+        unique_candidates = set(candidates)
+        return unique_candidates.pop() if len(unique_candidates) == 1 else None
+
+    @staticmethod
+    def _from_import_candidates(
+        call: CallSite,
+        symbols: Iterable[Symbol],
+        file_paths: Iterable[Path],
+    ):
+        candidates = []
+        for imported in symbols:
+            if (
+                imported.symbol_type != "from_import"
+                or imported.scope_name is not None
+                or imported.file_path != call.caller_file_path
+                or imported.name != call.callee_name
+                or imported.imported_name in (None, "*")
+            ):
+                continue
+            candidates.extend(
+                GraphBuilder._local_function_candidates(
+                    imported.module,
+                    imported.relative_import_level,
+                    imported.imported_name,
+                    call.caller_file_path,
+                    symbols,
+                    file_paths,
+                )
+            )
+        return candidates
+
+    @staticmethod
+    def _module_import_candidates(
+        call: CallSite,
+        symbols: Iterable[Symbol],
+        file_paths: Iterable[Path],
+    ):
+        candidates = []
+        for imported in symbols:
+            if (
+                imported.symbol_type != "import"
+                or imported.scope_name is not None
+                or imported.file_path != call.caller_file_path
+                or imported.name != call.callee_qualifier
+            ):
+                continue
+            candidates.extend(
+                GraphBuilder._local_function_candidates(
+                    imported.module,
+                    imported.relative_import_level,
+                    call.callee_name,
+                    call.caller_file_path,
+                    symbols,
+                    file_paths,
+                )
+            )
+        return candidates
+
+    @staticmethod
+    def _local_function_candidates(
+        module: str,
+        relative_import_level: int,
+        function_name: str,
+        caller_file_path: Path,
+        symbols: Iterable[Symbol],
+        file_paths: Iterable[Path],
+    ):
+        module_paths = GraphBuilder._module_paths(
+            module,
+            relative_import_level,
+            caller_file_path,
+            file_paths,
+        )
+        return [
+            symbol
+            for symbol in symbols
+            if symbol.symbol_type == "function"
+            and symbol.file_path in module_paths
+            and symbol.name == function_name
+        ]
+
+    @staticmethod
+    def _module_paths(
+        module: str,
+        relative_import_level: int,
+        caller_file_path: Path,
+        file_paths: Iterable[Path],
+    ):
+        if not module:
+            return set()
+
+        base_path = Path()
+        if relative_import_level:
+            base_path = caller_file_path.parent
+            for _ in range(relative_import_level - 1):
+                base_path = base_path.parent
+
+        module_path = base_path.joinpath(*module.split("."))
+        candidates = {
+            module_path.with_suffix(".py"),
+            module_path / "__init__.py",
+        }
+        return candidates.intersection(set(file_paths))
 
     def _call_id(self, repository_id: str, call: CallSite) -> str:
         if call.caller_type == "function":

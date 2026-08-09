@@ -19,6 +19,9 @@ class Symbol:
     end_line: Optional[int]
     parent_name: Optional[str] = None
     module: Optional[str] = None
+    imported_name: Optional[str] = None
+    relative_import_level: int = 0
+    scope_name: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -109,16 +112,20 @@ class _SymbolCollector(ast.NodeVisitor):
                 "import",
                 node,
                 module=imported.name,
+                imported_name=imported.name,
+                scope_name=self._current_scope_name(),
             )
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
-        module = "." * node.level + (node.module or "")
         for imported in node.names:
             self._add_symbol(
                 imported.asname or imported.name,
                 "from_import",
                 node,
-                module=module,
+                module=node.module,
+                imported_name=imported.name,
+                relative_import_level=node.level,
+                scope_name=self._current_scope_name(),
             )
 
     def visit_Call(self, node: ast.Call) -> None:
@@ -155,6 +162,9 @@ class _SymbolCollector(ast.NodeVisitor):
         symbol_type: str,
         node: ast.AST,
         module: Optional[str] = None,
+        imported_name: Optional[str] = None,
+        relative_import_level: int = 0,
+        scope_name: Optional[str] = None,
     ) -> Symbol:
         symbol = Symbol(
             name=name,
@@ -164,6 +174,16 @@ class _SymbolCollector(ast.NodeVisitor):
             end_line=getattr(node, "end_lineno", None),
             parent_name=self.class_stack[-1] if self.class_stack else None,
             module=module,
+            imported_name=imported_name,
+            relative_import_level=relative_import_level,
+            scope_name=scope_name,
         )
         self.symbols.append(symbol)
         return symbol
+
+    def _current_scope_name(self) -> Optional[str]:
+        if self.function_stack:
+            return self.function_stack[-1].name
+        if self.class_stack:
+            return self.class_stack[-1]
+        return None
