@@ -2,10 +2,10 @@
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional, Union
+from typing import List, Optional, Tuple, Union
 
 from .analyzer import FileAnalysis, Symbol, analyze_repository
-from .diff_parser import ChangedFile
+from .diff_parser import ChangedFile, ChangedRange
 
 
 @dataclass(frozen=True)
@@ -19,6 +19,7 @@ class ChangedSymbol:
     start_line: int
     end_line: int
     parent_name: Optional[str] = None
+    changed_ranges: Tuple[ChangedRange, ...] = ()
 
 
 def symbol_id(repository: Path, symbol: Symbol) -> str:
@@ -50,7 +51,24 @@ def _ranges_overlap(
     )
 
 
-def _to_changed_symbol(repository: Path, symbol: Symbol) -> ChangedSymbol:
+def _matching_ranges(
+    start_line: int,
+    end_line: int,
+    changed_file: ChangedFile,
+) -> Tuple[ChangedRange, ...]:
+    return tuple(
+        changed
+        for changed in changed_file.ranges
+        if start_line <= changed.end_line
+        and end_line >= changed.start_line
+    )
+
+
+def _to_changed_symbol(
+    repository: Path,
+    symbol: Symbol,
+    changed_ranges: Tuple[ChangedRange, ...],
+) -> ChangedSymbol:
     return ChangedSymbol(
         id=symbol_id(repository, symbol),
         name=symbol.name,
@@ -59,6 +77,7 @@ def _to_changed_symbol(repository: Path, symbol: Symbol) -> ChangedSymbol:
         start_line=symbol.start_line,
         end_line=symbol.end_line,
         parent_name=symbol.parent_name,
+        changed_ranges=changed_ranges,
     )
 
 
@@ -111,7 +130,17 @@ def detect_changed_symbols(
                 if has_more_specific_match:
                     continue
 
-            result = _to_changed_symbol(repository_path, symbol)
+            ranges = _matching_ranges(
+                symbol.start_line,
+                symbol.end_line,
+                changed_file,
+            )
+
+            result = _to_changed_symbol(
+                repository_path,
+                symbol,
+                ranges,
+            )
             changed_symbols[result.id] = result
 
     return sorted(

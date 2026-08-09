@@ -76,6 +76,7 @@ class ReviewWorkflow:
             end_line=symbol.end_line,
             source=source.content,
             context=self._format_context(context),
+            changed_ranges=symbol.changed_ranges,
         )
 
     @staticmethod

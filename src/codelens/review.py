@@ -1,12 +1,14 @@
-"""LLM review interfaces and typed review results for CodeLens."""
+"""Structured result returned by a review operation."""
 
 from dataclasses import dataclass
-from typing import List, Optional, Protocol, Tuple
+from typing import Optional, Protocol, Tuple
+
+from .diff_parser import ChangedRange
 
 
 @dataclass(frozen=True)
 class ReviewFinding:
-    """A single actionable code-review finding."""
+    """A single structured finding returned by an LLM review."""
 
     severity: str
     title: str
@@ -35,6 +37,7 @@ class ReviewRequest:
     end_line: Optional[int]
     source: str
     context: str
+    changed_ranges: Tuple[ChangedRange, ...] = ()
 
 
 class LLMProvider(Protocol):
@@ -52,7 +55,5 @@ class ReviewEngine:
         self.provider = provider
 
     def review(self, request: ReviewRequest) -> ReviewResult:
-        """Submit one review request to the configured provider."""
+        """Submit one review request to the configured LLM provider."""
         return self.provider.review(request)
-
-

@@ -9,6 +9,8 @@ class PromptBuilder:
     def build(self, request: ReviewRequest) -> str:
         """Build the review prompt for one changed symbol."""
 
+        changed_lines = self._format_changed_lines(request)
+
         return (
             "You are reviewing a code change in a Python repository.\n\n"
             "Review only the supplied change and its relevant context. "
@@ -22,6 +24,8 @@ class PromptBuilder:
             "Symbol:\n"
             f"{request.symbol_type} {request.symbol_name}\n"
             f"Lines: {request.start_line}-{request.end_line}\n\n"
+            "Changed lines:\n"
+            f"{changed_lines}\n\n"
             "Source:\n"
             "```python\n"
             f"{request.source}\n"
@@ -29,4 +33,16 @@ class PromptBuilder:
             "Graph context:\n"
             f"{request.context}\n\n"
             "Return findings as the required JSON object."
+        )
+
+    @staticmethod
+    def _format_changed_lines(request: ReviewRequest) -> str:
+        """Format the exact new-file ranges touched by the change."""
+
+        if not request.changed_ranges:
+            return "- None"
+
+        return "\n".join(
+            f"- {changed.start_line}-{changed.end_line}"
+            for changed in request.changed_ranges
         )
