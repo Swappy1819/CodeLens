@@ -157,6 +157,104 @@ def test_review_workflow_formats_repository_context(monkeypatch):
     assert "Importing files:" in context
     assert "- None" in context
 
+def test_review_workflow_includes_verified_callee_source(monkeypatch):
+    changed_symbol = ChangedSymbol(
+        id="repo:main.py:target:1",
+        file_path="main.py",
+        name="target",
+        symbol_type="Function",
+        start_line=1,
+        end_line=2,
+    )
+
+    monkeypatch.setattr(
+        "codelens.review_workflow.parse_git_diff",
+        lambda diff_text: (),
+    )
+
+    monkeypatch.setattr(
+        "codelens.review_workflow.detect_changed_symbols",
+        lambda repository, changed_files: (changed_symbol,),
+    )
+
+    class CalleeSourceProvider:
+        def __init__(self, repository):
+            self.repository = repository
+
+        def get_source(
+            self,
+            symbol_id,
+            file_path,
+            start_line,
+            end_line,
+        ):
+            if file_path == "pricing.py":
+                return SimpleNamespace(
+                    content=(
+                        "def apply_discount(total, discount):\n"
+                        "    return total * (1 - discount)\n"
+                    )
+                )
+
+            return SimpleNamespace(
+                content="def target():\n    return 1\n"
+            )
+
+    monkeypatch.setattr(
+        "codelens.review_workflow.SourceProvider",
+        CalleeSourceProvider,
+    )
+
+    class GraphWithCallee:
+        def impact(self, symbol_id):
+            return SimpleNamespace(
+                subject=None,
+                callers=(),
+                callees=(
+                    SimpleNamespace(
+                        id="repo:pricing.py:apply_discount:1",
+                        name="apply_discount",
+                        kind="Function",
+                        file_path="pricing.py",
+                        start_line=1,
+                        end_line=2,
+                    ),
+                ),
+                subclasses=(),
+            )
+
+        def files_importing_symbol_module(self, symbol_id):
+            return ()
+
+    captured = {}
+
+    class CapturingReviewEngine:
+        def __init__(self, provider):
+            pass
+
+        def review(self, request):
+            captured["request"] = request
+            return SimpleNamespace(findings=())
+
+    monkeypatch.setattr(
+        "codelens.review_workflow.ReviewEngine",
+        CapturingReviewEngine,
+    )
+
+    workflow = ReviewWorkflow(
+        repository=Path("."),
+        graph_queries=GraphWithCallee(),
+        provider=object(),
+        context_limits=ContextLimits(),
+    )
+
+    workflow.review("diff")
+
+    context = captured["request"].context
+
+    assert "Verified callee source:" in context
+    assert "apply_discount" in context
+    assert "return total * (1 - discount)" in context
 
 def test_review_workflow_filters_out_of_scope_findings(monkeypatch):
     changed_symbol = ChangedSymbol(
