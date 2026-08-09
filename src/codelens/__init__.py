@@ -18,6 +18,7 @@ from .context_builder import (
     SymbolContext,
 )
 from .neo4j_client import Neo4jClient
+from .source_provider import SourceProvider, SourceSnippet
 from .scanner import PythonFile, scan_repository
 
 __all__ = [
@@ -36,6 +37,8 @@ __all__ = [
     "PythonFile",
     "Symbol",
     "SymbolContext",
+    "SourceProvider",
+    "SourceSnippet",
     "SourceLocation",
     "analyze_python_file",
     "analyze_repository",
