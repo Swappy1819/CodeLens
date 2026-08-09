@@ -1,10 +1,12 @@
 """Command-line interface for CodeLens."""
 
 import argparse
-import subprocess
 from pathlib import Path
+import subprocess
 
+from .analyzer import analyze_repository
 from .gemini_provider import GeminiLLMProvider
+from .graph_builder import GraphBuilder
 from .graph_queries import GraphQueryService
 from .neo4j_client import Neo4jClient
 from .review_workflow import ReviewWorkflow
@@ -15,35 +17,52 @@ def get_git_diff() -> str:
 
     result = subprocess.run(
         ["git", "diff"],
+        check=True,
         capture_output=True,
         text=True,
-        check=True,
     )
-
     return result.stdout
 
 
-def main() -> int:
-    """Run the CodeLens command-line interface."""
+def index_repository(repository: Path) -> None:
+    """Analyze and ingest the repository into Neo4j."""
 
+    analyses = analyze_repository(repository)
+
+    client = Neo4jClient()
+    try:
+        builder = GraphBuilder(client)
+        builder.ingest(repository.resolve().name, analyses)
+    finally:
+        client.close()
+
+
+def main() -> int:
     parser = argparse.ArgumentParser(
-        prog="codelens",
-        description="LLM-powered repository-aware code review.",
+        description="LLM-powered repository-aware code review."
     )
 
-    subparsers = parser.add_subparsers(
-        dest="command",
-        required=True,
+    subparsers = parser.add_subparsers(dest="command")
+
+    subparsers.add_parser(
+        "index",
+        help="Analyze and index the repository into Neo4j.",
     )
 
     subparsers.add_parser(
         "review",
-        help="Review the current Git changes.",
+        help="Review current Git changes.",
     )
 
     args = parser.parse_args()
 
+    if args.command == "index":
+        index_repository(Path.cwd())
+        print("Repository indexed.")
+        return 0
+
     if args.command != "review":
+        parser.print_help()
         return 1
 
     diff = get_git_diff()
@@ -55,8 +74,6 @@ def main() -> int:
     client = Neo4jClient()
 
     try:
-        client.verify_connection()
-
         graph_queries = GraphQueryService(client)
         provider = GeminiLLMProvider()
 
@@ -67,28 +84,27 @@ def main() -> int:
         )
 
         result = workflow.review(diff)
-
-        if not result.findings:
-            print("No review findings.")
-            return 0
-
-        for finding in result.findings:
-            print(
-                f"[{finding.severity.upper()}] "
-                f"{finding.title}"
-            )
-            print(
-                f"{finding.file_path}:"
-                f"{finding.start_line}-"
-                f"{finding.end_line}"
-            )
-            print(finding.description)
-            print()
-
-        return 0
-
     finally:
         client.close()
+
+    if not result.findings:
+        print("No review findings.")
+        return 0
+
+    for finding in result.findings:
+        print(
+            f"[{finding.severity.upper()}] "
+            f"{finding.title}"
+        )
+        print(
+            f"{finding.file_path}:"
+            f"{finding.start_line}-"
+            f"{finding.end_line}"
+        )
+        print(finding.description)
+        print()
+
+    return 0
 
 
 if __name__ == "__main__":
