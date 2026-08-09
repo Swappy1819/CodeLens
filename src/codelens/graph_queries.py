@@ -53,6 +53,16 @@ _FILES_IMPORTING_MODULE_QUERY = (
     "ORDER BY file_path, id"
 )
 
+_FILES_IMPORTING_SYMBOL_MODULE_QUERY = (
+    "MATCH (symbol {id: $symbol_id}) "
+    "WHERE symbol:Function OR symbol:Method OR symbol:Class "
+    "MATCH (file:File) "
+    "WHERE file.id = symbol.file_id "
+    "MATCH (file)-[:IMPORTS]->(module:Module) "
+    "RETURN file.repository_id AS repository_id, "
+    "module.name AS module_name"
+)
+
 
 @dataclass(frozen=True)
 class CodeEntity:
@@ -96,6 +106,7 @@ class GraphQueryService:
 
     def impact(self, symbol_id: str) -> ImpactResult:
         subject = self._entity(_SUBJECT_QUERY, symbol_id=symbol_id)
+
         return ImpactResult(
             subject=subject,
             callers=tuple(self.callers(symbol_id)),
@@ -108,12 +119,15 @@ class GraphQueryService:
         repository_id: str,
         module_name: str,
     ) -> List[FileRef]:
-        with self.client.driver.session(database=self.client.database) as session:
+        with self.client.driver.session(
+            database=self.client.database
+        ) as session:
             records = session.run(
                 _FILES_IMPORTING_MODULE_QUERY,
                 repository_id=repository_id,
                 module_name=module_name,
             )
+
             return [
                 FileRef(
                     id=record["id"],
@@ -123,14 +137,53 @@ class GraphQueryService:
                 for record in records
             ]
 
-    def _entities(self, query: str, **parameters) -> List[CodeEntity]:
-        with self.client.driver.session(database=self.client.database) as session:
-            return [self._to_entity(record) for record in session.run(query, **parameters)]
+    def files_importing_symbol_module(
+        self,
+        symbol_id: str,
+    ) -> List[FileRef]:
+        """Return files importing the module containing a symbol."""
 
-    def _entity(self, query: str, **parameters) -> Optional[CodeEntity]:
-        with self.client.driver.session(database=self.client.database) as session:
+        with self.client.driver.session(
+            database=self.client.database
+        ) as session:
+            record = session.run(
+                _FILES_IMPORTING_SYMBOL_MODULE_QUERY,
+                symbol_id=symbol_id,
+            ).single()
+
+        if record is None:
+            return []
+
+        return self.files_importing_module(
+            record["repository_id"],
+            record["module_name"],
+        )
+
+    def _entities(
+        self,
+        query: str,
+        **parameters,
+    ) -> List[CodeEntity]:
+        with self.client.driver.session(
+            database=self.client.database
+        ) as session:
+            records = session.run(query, **parameters)
+            return [self._to_entity(record) for record in records]
+
+    def _entity(
+        self,
+        query: str,
+        **parameters,
+    ) -> Optional[CodeEntity]:
+        with self.client.driver.session(
+            database=self.client.database
+        ) as session:
             record = session.run(query, **parameters).single()
-            return self._to_entity(record) if record else None
+
+        if record is None:
+            return None
+
+        return self._to_entity(record)
 
     @staticmethod
     def _to_entity(record) -> CodeEntity:
