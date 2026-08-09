@@ -39,6 +39,19 @@ class CallSite:
     start_column: int
 
 
+@dataclass(frozen=True)
+class ClassBase:
+    """A statically observed base-class expression."""
+
+    child_name: str
+    child_file_path: Path
+    child_start_line: int
+    base_name: str
+    base_qualifier: Optional[str]
+    start_line: int
+    start_column: int
+
+
 @dataclass
 class FileAnalysis:
     """Symbols and an optional syntax error for one Python source file."""
@@ -47,6 +60,7 @@ class FileAnalysis:
     symbols: List[Symbol]
     syntax_error: Optional[str] = None
     calls: List[CallSite] = field(default_factory=list)
+    bases: List[ClassBase] = field(default_factory=list)
 
 
 def analyze_repository(repository: Union[Path, str]) -> List[FileAnalysis]:
@@ -77,6 +91,7 @@ def analyze_python_file(python_file: PythonFile, repository: Union[Path, str]) -
         file_path=python_file.path,
         symbols=collector.symbols,
         calls=collector.calls,
+        bases=collector.bases,
     )
 
 
@@ -85,11 +100,26 @@ class _SymbolCollector(ast.NodeVisitor):
         self.file_path = file_path
         self.symbols: List[Symbol] = []
         self.calls: List[CallSite] = []
+        self.bases: List[ClassBase] = []
         self.class_stack: List[str] = []
         self.function_stack: List[Symbol] = []
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
-        self._add_symbol(node.name, "class", node)
+        child = self._add_symbol(node.name, "class", node)
+        for base in node.bases:
+            base_name, base_qualifier = self._base_target(base)
+            if base_name is not None:
+                self.bases.append(
+                    ClassBase(
+                        child_name=child.name,
+                        child_file_path=child.file_path,
+                        child_start_line=child.start_line,
+                        base_name=base_name,
+                        base_qualifier=base_qualifier,
+                        start_line=base.lineno,
+                        start_column=base.col_offset,
+                    )
+                )
         self.class_stack.append(node.name)
         self.generic_visit(node)
         self.class_stack.pop()
@@ -154,6 +184,14 @@ class _SymbolCollector(ast.NodeVisitor):
             return node.func.id, None
         if isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name):
             return node.func.attr, node.func.value.id
+        return None, None
+
+    @staticmethod
+    def _base_target(node: ast.AST) -> tuple:
+        if isinstance(node, ast.Name):
+            return node.id, None
+        if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+            return node.attr, node.value.id
         return None, None
 
     def _add_symbol(

@@ -3,7 +3,7 @@
 from pathlib import Path
 from typing import Iterable
 
-from .analyzer import CallSite, FileAnalysis, Symbol
+from .analyzer import CallSite, ClassBase, FileAnalysis, Symbol
 from .neo4j_client import Neo4jClient
 
 
@@ -45,6 +45,7 @@ class GraphBuilder:
             for analysis in analyses:
                 self._merge_file(session, repository_id, repository_name, analysis)
                 self._merge_symbols(session, repository_id, analysis)
+            self._merge_inheritance(session, repository_id, analyses)
             self._merge_calls(session, repository_id, analyses)
 
     def _merge_file(
@@ -172,6 +173,137 @@ class GraphBuilder:
                     start_line=call.start_line,
                     start_column=call.start_column,
                 ).consume()
+
+    def _merge_inheritance(
+        self,
+        session,
+        repository_id: str,
+        analyses: Iterable[FileAnalysis],
+    ) -> None:
+        analyses = list(analyses)
+        symbols = [symbol for analysis in analyses for symbol in analysis.symbols]
+        file_paths = {analysis.file_path for analysis in analyses}
+        for analysis in analyses:
+            for base in analysis.bases:
+                parent = self._resolve_base(base, symbols, file_paths)
+                if parent is None:
+                    continue
+
+                session.run(
+                    "MATCH (child:Class {id: $child_id}) "
+                    "MATCH (base:Class {id: $base_id}) "
+                    "MERGE (child)-[:EXTENDS]->(base)",
+                    child_id=self._class_id(
+                        repository_id, base.child_file_path, base.child_name
+                    ),
+                    base_id=self._class_id(
+                        repository_id, parent.file_path, parent.name
+                    ),
+                ).consume()
+
+    @staticmethod
+    def _resolve_base(
+        base: ClassBase,
+        symbols: Iterable[Symbol],
+        file_paths: Iterable[Path],
+    ):
+        symbols = list(symbols)
+        if base.base_qualifier is None:
+            candidates = [
+                symbol
+                for symbol in symbols
+                if symbol.symbol_type == "class"
+                and symbol.file_path == base.child_file_path
+                and symbol.name == base.base_name
+            ]
+            candidates.extend(
+                GraphBuilder._from_import_class_candidates(base, symbols, file_paths)
+            )
+        else:
+            candidates = GraphBuilder._module_import_class_candidates(
+                base, symbols, file_paths
+            )
+
+        unique_candidates = set(candidates)
+        return unique_candidates.pop() if len(unique_candidates) == 1 else None
+
+    @staticmethod
+    def _from_import_class_candidates(
+        base: ClassBase,
+        symbols: Iterable[Symbol],
+        file_paths: Iterable[Path],
+    ):
+        candidates = []
+        for imported in symbols:
+            if (
+                imported.symbol_type != "from_import"
+                or imported.scope_name is not None
+                or imported.file_path != base.child_file_path
+                or imported.name != base.base_name
+                or imported.imported_name in (None, "*")
+            ):
+                continue
+            candidates.extend(
+                GraphBuilder._local_class_candidates(
+                    imported.module,
+                    imported.relative_import_level,
+                    imported.imported_name,
+                    base.child_file_path,
+                    symbols,
+                    file_paths,
+                )
+            )
+        return candidates
+
+    @staticmethod
+    def _module_import_class_candidates(
+        base: ClassBase,
+        symbols: Iterable[Symbol],
+        file_paths: Iterable[Path],
+    ):
+        candidates = []
+        for imported in symbols:
+            if (
+                imported.symbol_type != "import"
+                or imported.scope_name is not None
+                or imported.file_path != base.child_file_path
+                or imported.name != base.base_qualifier
+            ):
+                continue
+            candidates.extend(
+                GraphBuilder._local_class_candidates(
+                    imported.module,
+                    imported.relative_import_level,
+                    base.base_name,
+                    base.child_file_path,
+                    symbols,
+                    file_paths,
+                )
+            )
+        return candidates
+
+    @staticmethod
+    def _local_class_candidates(
+        module: str,
+        relative_import_level: int,
+        class_name: str,
+        caller_file_path: Path,
+        symbols: Iterable[Symbol],
+        file_paths: Iterable[Path],
+    ):
+        module_paths = GraphBuilder._module_paths(
+            module,
+            relative_import_level,
+            caller_file_path,
+            file_paths,
+        )
+        return [
+            symbol
+            for symbol in symbols
+            if symbol.symbol_type == "class"
+            and symbol.file_path in module_paths
+            and symbol.name == class_name
+        ]
 
     @staticmethod
     def _resolve_call(

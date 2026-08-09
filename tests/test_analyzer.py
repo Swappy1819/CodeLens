@@ -44,6 +44,24 @@ def test_extracts_classes_and_their_methods(tmp_path: Path) -> None:
     assert method.file_path == Path("models/user.py")
 
 
+def test_extracts_simple_class_base_references(tmp_path: Path) -> None:
+    write_python_file(
+        tmp_path,
+        "models.py",
+        "class Base:\n    pass\n\nclass Child(Base):\n    pass\n\nclass Imported(module.Parent):\n    pass\n\nclass Dynamic(factory()):\n    pass\n",
+    )
+
+    bases = analyze_repository(tmp_path)[0].bases
+
+    assert [
+        (base.child_name, base.base_name, base.base_qualifier, base.start_line)
+        for base in bases
+    ] == [
+        ("Child", "Base", None, 4),
+        ("Imported", "Parent", "module", 7),
+    ]
+
+
 def test_extracts_imports_and_from_imports(tmp_path: Path) -> None:
     write_python_file(
         tmp_path,
