@@ -57,11 +57,22 @@ _FILES_IMPORTING_SYMBOL_MODULE_QUERY = (
     "MATCH (symbol {id: $symbol_id}) "
     "WHERE symbol:Function OR symbol:Method OR symbol:Class "
     "MATCH (file:File) "
-    "WHERE file.id = symbol.file_id "
+    "WHERE file.repository_id = split(symbol.id, ':')[0] "
+    "AND file.file_path = symbol.file_path "
     "MATCH (file)-[:IMPORTS]->(module:Module) "
     "RETURN file.repository_id AS repository_id, "
     "module.name AS module_name"
 )
+
+# _FILES_IMPORTING_SYMBOL_MODULE_QUERY = (
+#     "MATCH (symbol {id: $symbol_id}) "
+#     "WHERE symbol:Function OR symbol:Method OR symbol:Class "
+#     "MATCH (file:File) "
+#     "WHERE file.id = symbol.file_id "
+#     "MATCH (file)-[:IMPORTS]->(module:Module) "
+#     "RETURN file.repository_id AS repository_id, "
+#     "module.name AS module_name"
+# )
 
 
 @dataclass(frozen=True)
