@@ -228,3 +228,75 @@ def test_review_workflow_filters_out_of_scope_findings(monkeypatch):
 
     assert len(result.findings) == 1
     assert result.findings[0].title == "Real changed-code problem"
+
+
+def test_review_workflow_reviews_all_changed_symbols(monkeypatch):
+    first_symbol = ChangedSymbol(
+        id="repo:main.py:first:1",
+        file_path="main.py",
+        name="first",
+        symbol_type="Function",
+        start_line=1,
+        end_line=2,
+        changed_ranges=(
+            ChangedRange(start_line=1, end_line=1),
+        ),
+    )
+
+    second_symbol = ChangedSymbol(
+        id="repo:main.py:second:5",
+        file_path="main.py",
+        name="second",
+        symbol_type="Function",
+        start_line=5,
+        end_line=6,
+        changed_ranges=(
+            ChangedRange(start_line=5, end_line=5),
+        ),
+    )
+
+    monkeypatch.setattr(
+        "codelens.review_workflow.parse_git_diff",
+        lambda diff_text: (),
+    )
+
+    monkeypatch.setattr(
+        "codelens.review_workflow.detect_changed_symbols",
+        lambda repository, changed_files: (
+            first_symbol,
+            second_symbol,
+        ),
+    )
+
+    monkeypatch.setattr(
+        "codelens.review_workflow.SourceProvider",
+        FakeSourceProvider,
+    )
+
+    class FakeProvider:
+        def review(self, request):
+            return ReviewResult(
+                findings=(
+                    ReviewFinding(
+                        severity="high",
+                        title=f"Finding for {request.symbol_name}",
+                        description="Test finding.",
+                        file_path=request.file_path,
+                        start_line=request.start_line,
+                        end_line=request.start_line,
+                    ),
+                )
+            )
+
+    workflow = ReviewWorkflow(
+        repository=Path("."),
+        graph_queries=FakeGraphQueries(),
+        provider=FakeProvider(),
+        context_limits=ContextLimits(),
+    )
+
+    result = workflow.review("diff")
+
+    assert len(result.findings) == 2
+    assert result.findings[0].title == "Finding for first"
+    assert result.findings[1].title == "Finding for second"
