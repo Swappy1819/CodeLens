@@ -43,7 +43,7 @@ def test_gemini_provider_sends_prompt_to_backend() -> None:
     assert result.findings == ()
     assert len(client.models.calls) == 1
     assert "service.py" in client.models.calls[0]["contents"]
-    assert client.models.calls[0]["model"] == "gemini-2.5-flash"
+    assert client.models.calls[0]["model"] == "gemini-3.6-flash"
 
 
 def test_gemini_provider_parses_findings() -> None:

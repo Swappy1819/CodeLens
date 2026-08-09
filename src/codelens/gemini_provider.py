@@ -16,7 +16,7 @@ class GeminiLLMProvider:
     def __init__(
         self,
         client=None,
-        model: str = "gemini-2.5-flash",
+        model="gemini-3.6-flash",
         prompt_builder: Optional[PromptBuilder] = None,
     ) -> None:
         self.client = client or genai.Client(
@@ -35,6 +35,42 @@ class GeminiLLMProvider:
             contents=prompt,
             config={
                 "response_mime_type": "application/json",
+                "response_schema": {
+                    "type": "object",
+                    "properties": {
+                        "findings": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "severity": {
+                                        "type": "string",
+                                        "enum": [
+                                            "low",
+                                            "medium",
+                                            "high",
+                                            "critical",
+                                        ],
+                                    },
+                                    "title": {"type": "string"},
+                                    "description": {"type": "string"},
+                                    "file_path": {"type": "string"},
+                                    "start_line": {"type": "integer"},
+                                    "end_line": {"type": "integer"},
+                                },
+                                "required": [
+                                    "severity",
+                                    "title",
+                                    "description",
+                                    "file_path",
+                                    "start_line",
+                                    "end_line",
+                                ],
+                            },
+                        },
+                    },
+                    "required": ["findings"],
+                },
             },
         )
 
