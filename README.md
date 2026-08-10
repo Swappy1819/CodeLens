@@ -6,6 +6,8 @@ LLM-powered, repository-aware code review using a Python knowledge graph and Neo
 
 https://github.com/user-attachments/assets/b057784f-07b9-450b-8112-25e7d7feda5f
 
+The `[HIGH]` finding in LIVE VIDEO ABOVE demonstrates CodeLens detecting a correctness issue in the changed code and grounding the review in the repository's structure and relationships.
+
 ## Architecture
 
 ...
