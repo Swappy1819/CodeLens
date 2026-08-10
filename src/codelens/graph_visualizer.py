@@ -34,8 +34,10 @@ class GraphVisualizer:
         self,
         relationships: Iterable[GraphRelationship],
         output_path: Path,
+        changed_paths: set[str] | None = None,
     ) -> None:
         relationships = list(relationships)
+        changed_paths = changed_paths or set()
 
         network = Network(
             height="100vh",
@@ -63,11 +65,27 @@ class GraphVisualizer:
             degrees[relationship.target_id] += 1
 
         for node_id, (name, kind) in nodes.items():
+            changed = (
+
+                kind == "File"
+                and any(
+                    node_id.endswith(f":{changed_path}")
+                    for changed_path in changed_paths
+                )
+            )
+
             network.add_node(
                 node_id,
                 label=name,
-                title=f"{kind}: {name}",
-                color=NODE_COLORS.get(kind, "#777777"),
+                title=(
+                    f"{kind}: {name}"
+                    + (" — CHANGED" if changed else "")
+                ),
+                color=(
+                    "#FF1744"
+                    if changed
+                    else NODE_COLORS.get(kind, "#777777")
+                ),
                 font={"color": "#FFFFFF", "size": 16},
             )
 
@@ -165,10 +183,17 @@ class GraphVisualizer:
         payload = {
             "nodes": [
                 {
-                    "id": node_id,
-                    "name": name,
-                    "kind": kind,
-                }
+                "id": node_id,
+                "name": name,
+                "kind": kind,
+                "changed": (
+                    kind == "File"
+                    and any(
+                        node_id.endswith(f":{changed_path}")
+                        for changed_path in changed_paths
+                    )
+                ),
+            }
                 for node_id, (name, kind) in nodes.items()
             ],
             "relationships": [
@@ -821,6 +846,34 @@ class GraphVisualizer:
             <span class="legend-dot" style="background:#E45756;"></span>
             Method
         </span>
+
+        <div id="codelens-legend">
+            <span class="legend-item">
+                <span class="legend-dot" style="background:#4C78A8;"></span>
+                File
+            </span>
+            <span class="legend-item">
+                <span class="legend-dot" style="background:#AB47BC;"></span>
+                Module
+            </span>
+            <span class="legend-item">
+                <span class="legend-dot" style="background:#F58518;"></span>
+                Class
+            </span>
+            <span class="legend-item">
+                <span class="legend-dot" style="background:#54A24B;"></span>
+                Function
+            </span>
+            <span class="legend-item">
+                <span class="legend-dot" style="background:#E45756;"></span>
+                Method
+            </span>
+
+            <span class="legend-item">
+                <span class="legend-dot" style="background:#FF1744;"></span>
+                Changed
+            </span>
+        </div>
     </div>
 </div>
 
@@ -909,6 +962,42 @@ class GraphVisualizer:
 
 <script>
     const codelensData = __PAYLOAD_JSON__;
+
+    const codelensChangedNodes =
+        codelensData.nodes.filter(
+            node => node.changed
+        );
+
+    let codelensChangedPulse = false;
+
+    function pulseChangedNodes() {
+        if (
+            typeof nodes === "undefined" ||
+            !codelensChangedNodes.length
+        ) {
+            return;
+        }
+
+        codelensChangedPulse =
+            !codelensChangedPulse;
+
+        nodes.update(
+            codelensChangedNodes.map(function(node) {
+                return {
+                    id: node.id,
+                    color: codelensChangedPulse
+                        ? "#FF1744"
+                        : "#8B1028",
+                };
+            })
+        );
+    }
+
+    setInterval(
+        pulseChangedNodes,
+        700
+    );
+    
 
     const codelensRelationshipTypes = new Set([
         "CONTAINS",

@@ -24,6 +24,21 @@ def get_git_diff() -> str:
     )
     return result.stdout
 
+def get_changed_paths() -> set[str]:
+    """Return repository-relative paths changed in the working tree."""
+
+    result = subprocess.run(
+        ["git", "diff", "--name-only"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    return {
+        Path(path).as_posix()
+        for path in result.stdout.splitlines()
+        if path.strip()
+    }
 
 def index_repository(repository: Path) -> None:
     """Analyze and ingest the repository into Neo4j."""
@@ -40,7 +55,7 @@ def index_repository(repository: Path) -> None:
 
 def graph_repository(repository: Path) -> None:
     """Render the repository graph as an interactive HTML file."""
-
+    changed_paths = get_changed_paths()
     client = Neo4jClient()
 
     try:
@@ -55,6 +70,7 @@ def graph_repository(repository: Path) -> None:
         visualizer.render(
             relationships,
             output_path,
+            changed_paths = changed_paths,
         )
     finally:
         client.close()
