@@ -1,4 +1,5 @@
 from pathlib import Path
+from codelens.graph_queries import GraphQueryService, GraphRelationship
 import sys
 from types import SimpleNamespace
 
@@ -137,3 +138,42 @@ def test_files_importing_module_returns_ordered_file_refs() -> None:
     assert "payments" not in query
     assert parameters == {"repository_id": "repo", "module_name": "payments"}
     assert "ORDER BY file_path, id" in query
+
+def test_relationships_returns_typed_repository_scoped_relationships():
+    service, driver = service_with_responses(
+        [
+            {
+                "source_id": "repo:a.py:run:1",
+                "source_name": "run",
+                "source_kind": "Function",
+                "relationship": "CALLS",
+                "target_id": "repo:b.py:work:4",
+                "target_name": "work",
+                "target_kind": "Function",
+            }
+        ]
+    )
+
+    relationships = service.relationships("repo")
+
+    assert relationships == [
+        GraphRelationship(
+            source_id="repo:a.py:run:1",
+            source_name="run",
+            source_kind="Function",
+            relationship="CALLS",
+            target_id="repo:b.py:work:4",
+            target_name="work",
+            target_kind="Function",
+        )
+    ]
+
+    query, parameters = driver.calls[0]
+
+    
+    assert parameters == {"repository_id": "repo"}
+    assert "source.repository_id = $repository_id" in query
+    assert "target.repository_id = $repository_id" in query
+    assert "NOT source:Repository" in query
+    assert "NOT target:Repository" in query
+    assert "ORDER BY source_id, relationship, target_id" in query

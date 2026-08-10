@@ -64,6 +64,23 @@ _FILES_IMPORTING_SYMBOL_MODULE_QUERY = (
     "module.name AS module_name"
 )
 
+_RELATIONSHIPS_QUERY = (
+    "MATCH (source)-[relationship]->(target) "
+    "WHERE source.repository_id = $repository_id "
+    "AND target.repository_id = $repository_id "
+    "AND NOT source:Repository "
+    "AND NOT target:Repository "
+    "RETURN "
+    "source.id AS source_id, "
+    "source.name AS source_name, "
+    "labels(source)[0] AS source_kind, "
+    "type(relationship) AS relationship, "
+    "target.id AS target_id, "
+    "target.name AS target_name, "
+    "labels(target)[0] AS target_kind "
+    "ORDER BY source_id, relationship, target_id"
+)
+
 # _FILES_IMPORTING_SYMBOL_MODULE_QUERY = (
 #     "MATCH (symbol {id: $symbol_id}) "
 #     "WHERE symbol:Function OR symbol:Method OR symbol:Class "
@@ -74,6 +91,15 @@ _FILES_IMPORTING_SYMBOL_MODULE_QUERY = (
 #     "module.name AS module_name"
 # )
 
+@dataclass(frozen=True)
+class GraphRelationship:
+    source_id: str
+    source_name: str
+    source_kind: str
+    relationship: str
+    target_id: str
+    target_name: str
+    target_kind: str
 
 @dataclass(frozen=True)
 class CodeEntity:
@@ -206,3 +232,30 @@ class GraphQueryService:
             start_line=record["start_line"],
             end_line=record["end_line"],
         )
+
+    def relationships(
+        self,
+        repository_id: str,
+        ) -> List[GraphRelationship]:
+        """Return all code-structure relationships for a repository."""
+
+        with self.client.driver.session(
+            database=self.client.database
+        ) as session:
+            records = session.run(
+                _RELATIONSHIPS_QUERY,
+                repository_id=repository_id,
+            )
+
+            return [
+                GraphRelationship(
+                    source_id=record["source_id"],
+                    source_name=record["source_name"],
+                    source_kind=record["source_kind"],
+                    relationship=record["relationship"],
+                    target_id=record["target_id"],
+                    target_name=record["target_name"],
+                    target_kind=record["target_kind"],
+                )
+                for record in records
+            ]
