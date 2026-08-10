@@ -6,6 +6,10 @@ build-backend = "setuptools.build_meta"
 name = "codelens"
 version = "0.1.0"
 description = "LLM-powered repository-aware code review"
+dependencies = [
+    "neo4j==5.28.4",
+    "google-genai",
+]
 
 [project.scripts]
 codelens = "codelens.cli:main"
