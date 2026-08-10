@@ -8,6 +8,7 @@ from .analyzer import analyze_repository
 from .gemini_provider import GeminiLLMProvider
 from .graph_builder import GraphBuilder
 from .graph_queries import GraphQueryService
+from .graph_visualizer import GraphVisualizer
 from .neo4j_client import Neo4jClient
 from .review_workflow import ReviewWorkflow
 
@@ -37,6 +38,28 @@ def index_repository(repository: Path) -> None:
         client.close()
 
 
+def graph_repository(repository: Path) -> None:
+    """Render the repository graph as an interactive HTML file."""
+
+    client = Neo4jClient()
+
+    try:
+        graph_queries = GraphQueryService(client)
+        relationships = graph_queries.relationships(
+            repository.resolve().name,
+        )
+
+        output_path = repository / "codelens-graph.html"
+
+        visualizer = GraphVisualizer()
+        visualizer.render(
+            relationships,
+            output_path,
+        )
+    finally:
+        client.close()
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="LLM-powered repository-aware code review."
@@ -50,6 +73,11 @@ def main() -> int:
     )
 
     subparsers.add_parser(
+        "graph",
+        help="Render the repository graph as an interactive HTML file.",
+    )
+
+    subparsers.add_parser(
         "review",
         help="Review current Git changes.",
     )
@@ -59,6 +87,11 @@ def main() -> int:
     if args.command == "index":
         index_repository(Path.cwd())
         print("Repository indexed.")
+        return 0
+
+    if args.command == "graph":
+        graph_repository(Path.cwd())
+        print("Graph written to codelens-graph.html.")
         return 0
 
     if args.command != "review":

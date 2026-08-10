@@ -179,6 +179,50 @@ def test_index_command(monkeypatch, capsys):
     output = capsys.readouterr().out
 
     assert "Repository indexed." in output
+
+def test_graph_command(monkeypatch, capsys, tmp_path):
+    monkeypatch.setattr(
+        "sys.argv",
+        ["codelens", "graph"],
+    )
+
+    monkeypatch.chdir(tmp_path)
+
+    class FakeClient:
+        def close(self):
+            pass
+
+    class FakeGraphQueries:
+        def __init__(self, client):
+            pass
+
+        def relationships(self, repository_id):
+            assert repository_id == tmp_path.resolve().name
+            return []
+
+    class FakeVisualizer:
+        def render(self, relationships, output_path):
+            assert relationships == []
+            assert output_path == tmp_path / "codelens-graph.html"
+
+    monkeypatch.setattr(
+        "codelens.cli.Neo4jClient",
+        FakeClient,
+    )
+    monkeypatch.setattr(
+        "codelens.cli.GraphQueryService",
+        FakeGraphQueries,
+    )
+    monkeypatch.setattr(
+        "codelens.cli.GraphVisualizer",
+        FakeVisualizer,
+    )
+
+    assert main() == 0
+
+    output = capsys.readouterr().out
+
+    assert "Graph written to codelens-graph.html." in output
 # from codelens.cli import main
 
 

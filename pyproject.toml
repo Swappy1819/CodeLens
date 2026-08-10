@@ -9,6 +9,7 @@ description = "LLM-powered repository-aware code review"
 dependencies = [
     "neo4j==5.28.4",
     "google-genai",
+    "pyvis",
 ]
 
 [project.scripts]
