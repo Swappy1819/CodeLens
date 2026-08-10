@@ -128,10 +128,6 @@ That gives CodeLens deterministic information about the source code.
 
 ---
 
-https://github.com/user-attachments/assets/b057784f-07b9-450b-8112-25e7d7feda5f
-
-
-
 # Knowledge Graph
 
 The repository is represented as typed entities and relationships.
