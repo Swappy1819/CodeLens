@@ -1,4 +1,5 @@
 from codelens.cli import get_git_diff, main
+from pathlib import Path
 
 
 def test_review_command_returns_success(monkeypatch):
@@ -127,6 +128,57 @@ def test_review_command_prints_findings(monkeypatch, capsys):
     assert "[HIGH] SQL injection" in output
     assert "service.py:10-12" in output
     assert "User input is passed directly to a query." in output
+
+def test_review_command_with_no_changes(monkeypatch, capsys):
+    monkeypatch.setattr(
+        "sys.argv",
+        ["codelens", "review"],
+    )
+
+    monkeypatch.setattr(
+        "codelens.cli.get_git_diff",
+        lambda: "",
+    )
+
+    class FailClient:
+        def __init__(self):
+            raise AssertionError("Neo4j should not be created")
+
+    monkeypatch.setattr(
+        "codelens.cli.Neo4jClient",
+        FailClient,
+    )
+
+    assert main() == 0
+
+    output = capsys.readouterr().out
+
+    assert "No changes to review." in output
+
+
+def test_index_command(monkeypatch, capsys):
+    monkeypatch.setattr(
+        "sys.argv",
+        ["codelens", "index"],
+    )
+
+    calls = []
+
+    def fake_index_repository(repository):
+        calls.append(repository)
+
+    monkeypatch.setattr(
+        "codelens.cli.index_repository",
+        fake_index_repository,
+    )
+
+    assert main() == 0
+
+    assert calls == [Path.cwd()]
+
+    output = capsys.readouterr().out
+
+    assert "Repository indexed." in output
 # from codelens.cli import main
 
 
