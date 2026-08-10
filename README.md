@@ -1,5 +1,19 @@
 # CodeLens
 
+LLM-powered, repository-aware code review using a Python knowledge graph and Neo4j.
+
+## Demo
+
+https://github.com/user-attachments/assets/b057784f-07b9-450b-8112-25e7d7feda5f
+
+## Architecture
+
+...
+
+
+
+# CodeLens
+
 ### Repository-aware AI code review powered by a Python knowledge graph
 
 CodeLens is an LLM-powered code review assistant that analyzes Python repositories, builds a structural knowledge graph in Neo4j, and uses repository context when reviewing Git changes.
@@ -113,6 +127,10 @@ The analyzer uses Python's AST rather than asking an LLM to infer basic reposito
 That gives CodeLens deterministic information about the source code.
 
 ---
+
+https://github.com/user-attachments/assets/b057784f-07b9-450b-8112-25e7d7feda5f
+
+
 
 # Knowledge Graph
 
